@@ -1,0 +1,46 @@
+name: Fix feed brand for ChatGPT
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # daily at 05:00 UTC
+  workflow_dispatch:       # adds a "Run workflow" button for manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download source feed
+        run: |
+          curl -sSfL "https://stbmgooglefeedprod.blob.core.windows.net/google-shopping-feed/buymaterials-feed.tsv" -o source.tsv
+          echo "Source rows: $(wc -l < source.tsv)"
+
+      - name: Fill empty brand cells with BuyMaterials
+        run: |
+          awk 'BEGIN{FS=OFS="\t"}
+          NR==1{for(i=1;i<=NF;i++) if($i=="brand") b=i; if(!b){print "brand column not found" > "/dev/stderr"; exit 1} print; next}
+          {if($b ~ /^[[:space:]]*$/) $b="BuyMaterials"; print}' source.tsv > buymaterials-feed-chatgpt.tsv
+
+      - name: Sanity check
+        run: |
+          IN=$(wc -l < source.tsv)
+          OUT=$(wc -l < buymaterials-feed-chatgpt.tsv)
+          echo "Output rows: $OUT"
+          if [ "$IN" -lt 2 ] || [ "$IN" -ne "$OUT" ]; then
+            echo "Row count problem (in: $IN, out: $OUT). Not publishing." >&2
+            exit 1
+          fi
+          rm source.tsv
+
+      - name: Commit if changed
+        run: |
+          touch .nojekyll
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add buymaterials-feed-chatgpt.tsv .nojekyll
+          git diff --cached --quiet || git commit -m "Update ChatGPT feed"
+          git push
